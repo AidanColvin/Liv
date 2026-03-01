@@ -26,6 +26,13 @@
     font-size: 13px; font-weight: 100; letter-spacing: 5px;
     color: rgba(255,255,255,0.38); text-transform: uppercase;
   }
+  #status-msg {
+    position: absolute; top: 38px; left: 22px;
+    font-family: 'Josefin Sans', sans-serif;
+    font-size: 10px; font-weight: 100; letter-spacing: 4px;
+    color: rgba(255,200,100,0.55); text-transform: uppercase;
+    transition: opacity 0.3s;
+  }
   #title-screen, #game-over-screen {
     position: absolute; top:0;left:0;right:0;bottom:0;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -65,6 +72,7 @@
   <canvas id="canvas"></canvas>
   <div id="ui">
     <div id="score">0 m</div>
+    <div id="status-msg"></div>
     <div id="title-screen">
       <h1>LIV</h1>
       <p>space / up arrow to jump  ·  hold to spin<br>mobile: tap left  ·  hold center to spin</p>
@@ -83,30 +91,31 @@ const ctx = canvas.getContext('2d');
 const W = 640, H = 360;
 canvas.width = W; canvas.height = H;
 
-const scoreEl = document.getElementById('score');
-const titleEl = document.getElementById('title-screen');
+const scoreEl    = document.getElementById('score');
+const statusMsg  = document.getElementById('status-msg');
+const titleEl    = document.getElementById('title-screen');
 const gameOverEl = document.getElementById('game-over-screen');
 const finalScoreEl = document.getElementById('final-score-text');
 
 const PALETTES = [
-  { sky1: '#a8b4a2', sky2: '#c8bc88', sun: '#d8b862',
-    ground: '#beb4a2', groundDark: '#9e9280', roadLine: '#b0a890',
-    bldgFar: '#8a9284', bldgMid: '#727a6e', bldgNear: '#5c6458',
-    tree: '#3a4c3c', treeDark: '#2a3430',
-    wire: '#3c2c1a', accent: '#b08848',
-    flagColors: ['#b03828','#c09040','#5890a0','#808040','#a05870'] },
-  { sky1: '#9ca8b0', sky2: '#b8b0bc', sun: '#ccaa90',
-    ground: '#a8a09c', groundDark: '#887e78', roadLine: '#9c9490',
-    bldgFar: '#686878', bldgMid: '#585868', bldgNear: '#484858',
-    tree: '#283030', treeDark: '#182020',
-    wire: '#281c10', accent: '#907060',
-    flagColors: ['#a03828','#b08038','#487888','#787030','#884860'] },
-  { sky1: '#b4bcb0', sky2: '#c4bc9c', sun: '#d4c880',
-    ground: '#acb4a8', groundDark: '#8c9488', roadLine: '#a0a898',
-    bldgFar: '#687870', bldgMid: '#586860', bldgNear: '#485850',
-    tree: '#2c4038', treeDark: '#1c2c28',
-    wire: '#382818', accent: '#9c8050',
-    flagColors: ['#a83828','#c09040','#508898','#808840','#985068'] },
+  { sky1:'#a8b4a2',sky2:'#c8bc88',sun:'#d8b862',
+    ground:'#beb4a2',groundDark:'#9e9280',roadLine:'#b0a890',
+    bldgFar:'#8a9284',bldgMid:'#727a6e',bldgNear:'#5c6458',
+    tree:'#3a4c3c',treeDark:'#2a3430',
+    wire:'#3c2c1a',accent:'#b08848',
+    flagColors:['#b03828','#c09040','#5890a0','#808040','#a05870'] },
+  { sky1:'#9ca8b0',sky2:'#b8b0bc',sun:'#ccaa90',
+    ground:'#a8a09c',groundDark:'#887e78',roadLine:'#9c9490',
+    bldgFar:'#686878',bldgMid:'#585868',bldgNear:'#484858',
+    tree:'#283030',treeDark:'#182020',
+    wire:'#281c10',accent:'#907060',
+    flagColors:['#a03828','#b08038','#487888','#787030','#884860'] },
+  { sky1:'#b4bcb0',sky2:'#c4bc9c',sun:'#d4c880',
+    ground:'#acb4a8',groundDark:'#8c9488',roadLine:'#a0a898',
+    bldgFar:'#687870',bldgMid:'#586860',bldgNear:'#485850',
+    tree:'#2c4038',treeDark:'#1c2c28',
+    wire:'#382818',accent:'#9c8050',
+    flagColors:['#a83828','#c09040','#508898','#808840','#985068'] },
 ];
 let pal = PALETTES[0];
 
@@ -115,6 +124,18 @@ let score = 0, hiScore = 0;
 let speed = 1.8;
 let frame = 0;
 let particles = [];
+
+// ---- HIT / WOBBLY STATE ----
+// wobbleState: null | 'wobbly'
+let wobbleState = null;
+let wobbleTimer  = 0;      // frames remaining while wobbly
+let wobbleAngle  = 0;      // current wobble lean angle (radians)
+let wobbleDir    = 1;
+const WOBBLE_DURATION = 300; // 5 seconds at 60fps
+
+// For double-hit detection: track timestamps of barrier hits
+let hitTimestamps = [];    // array of frame numbers
+const DOUBLE_HIT_WINDOW = 600; // 10 seconds at 60fps
 
 const GROUND_Y = H * 0.76;
 
@@ -171,7 +192,7 @@ document.addEventListener('touchstart', e => {
     else if (rx <= 0.72) { holdSpin = true; }
   });
   if (state === 'title') startGame();
-  if (state === 'dead') startGame();
+  if (state === 'dead')  startGame();
 }, { passive: false });
 document.addEventListener('touchend', e => {
   e.preventDefault();
@@ -181,8 +202,8 @@ document.addEventListener('touchend', e => {
   });
 }, { passive: false });
 
-titleEl.addEventListener('click', () => { if (state==='title') startGame(); });
-gameOverEl.addEventListener('click', () => { if (state==='dead') startGame(); });
+titleEl.addEventListener('click',    () => { if (state==='title') startGame(); });
+gameOverEl.addEventListener('click', () => { if (state==='dead')  startGame(); });
 
 function startGame() {
   state = 'playing'; score = 0; speed = 1.8; frame = 0;
@@ -190,6 +211,9 @@ function startGame() {
   bgOff1 = bgOff2 = bgOff3 = groundOff = wireOff = 0;
   carter.y = GROUND_Y; carter.vy = 0; carter.onGround = true;
   carter.rotation = 0; carter.spinning = false; carter.jumpCount = 0;
+  wobbleState = null; wobbleTimer = 0; wobbleAngle = 0;
+  hitTimestamps = [];
+  statusMsg.textContent = '';
   pal = PALETTES[Math.floor(Math.random() * PALETTES.length)];
   buildSkyline();
   titleEl.style.display = 'none';
@@ -198,21 +222,53 @@ function startGame() {
 
 function jump() {
   if (carter.jumpCount < carter.maxJumps) {
-    carter.vy = -9.5; carter.onGround = false; carter.jumpCount++;
+    carter.vy = -11.5;   // higher jump for easier clearing
+    carter.onGround = false; carter.jumpCount++;
     spawnParticles(carter.x, carter.y + 8, 4, 'rgba(180,170,150,0.55)');
   }
 }
 
 function spawnParticles(x, y, n, color) {
   for (let i = 0; i < n; i++) {
-    particles.push({ x, y, vx: (Math.random()-0.5)*2.8, vy: -(Math.random()*2+0.4), life: 1, color, size: Math.random()*2+1.5 });
+    particles.push({ x, y,
+      vx: (Math.random()-0.5)*2.8, vy: -(Math.random()*2+0.4),
+      life: 1, color, size: Math.random()*2+1.5 });
   }
 }
 
 function spawnObstacle() {
   const types = ['cone','hydrant','pothole','crack','bench','trash'];
   const t = types[Math.floor(Math.random() * types.length)];
-  obstacles.push({ x: W+20, type: t, w: (t==='pothole'||t==='crack') ? 46 : 22, h: t==='pothole'?14:(t==='crack'?8:30) });
+  // Make obstacles a bit shorter so they're easier to clear
+  const heights = { cone:22, hydrant:22, bench:12, trash:22, pothole:14, crack:8 };
+  const widths  = { cone:22, hydrant:20, bench:36, trash:20, pothole:44, crack:44 };
+  obstacles.push({ x: W+20, type: t,
+    w: widths[t] || 22,
+    h: heights[t] || 22 });
+}
+
+// ---- HIT A BARRIER ----
+function hitBarrier() {
+  // Clean old timestamps outside the 10-second window
+  hitTimestamps = hitTimestamps.filter(f => frame - f < DOUBLE_HIT_WINDOW);
+
+  // Already wobbly AND hit again within 10 s = bail
+  if (wobbleState === 'wobbly' && hitTimestamps.length >= 1) {
+    die(); return;
+  }
+  // Two hits within 10 seconds = bail
+  if (hitTimestamps.length >= 1) {
+    die(); return;
+  }
+
+  // First hit: go wobbly
+  hitTimestamps.push(frame);
+  wobbleState  = 'wobbly';
+  wobbleTimer  = WOBBLE_DURATION;
+  wobbleAngle  = 0;
+  wobbleDir    = 1;
+  statusMsg.textContent = 'shaky...';
+  spawnParticles(carter.x, carter.y - 20, 8, pal.accent + 'bb');
 }
 
 function update() {
@@ -226,21 +282,38 @@ function update() {
   bgOff2 = (bgOff2 + speed * 0.16) % 2200;
   bgOff3 = (bgOff3 + speed * 0.38) % (W + 120);
   groundOff = (groundOff + speed) % 80;
-  wireOff = (wireOff + speed) % 220;
+  wireOff   = (wireOff + speed) % 220;
 
   if (jumpPressed) { jump(); jumpPressed = false; }
   if (holdSpin && !carter.onGround) { carter.spinning = true; carter.spinSpeed = 8; }
   if (carter.spinning) carter.rotation += carter.spinSpeed;
 
   carter.vy += 0.44;
-  carter.y += carter.vy;
+  carter.y  += carter.vy;
 
+  // ---- WOBBLE TICK ----
+  if (wobbleState === 'wobbly') {
+    wobbleTimer--;
+    // Oscillating wobble that decays
+    const decay = wobbleTimer / WOBBLE_DURATION;
+    wobbleAngle = Math.sin(frame * 0.28) * 0.22 * decay;
+
+    if (wobbleTimer <= 0) {
+      wobbleState = null; wobbleAngle = 0;
+      statusMsg.textContent = '';
+    } else if (wobbleTimer < 60) {
+      statusMsg.textContent = 'steady...';
+    }
+  }
+
+  // ---- GROUND COLLISION ----
   if (carter.y >= GROUND_Y) {
     carter.y = GROUND_Y; carter.vy = 0; carter.onGround = true; carter.jumpCount = 0;
     if (carter.spinning) spawnParticles(carter.x, carter.y, 5, pal.accent+'99');
     carter.spinning = false; carter.rotation = 0; carter.spinSpeed = 0;
   }
 
+  // ---- OBSTACLE SPAWNING ----
   obstacleCooldown--;
   if (obstacleCooldown <= 0) {
     spawnObstacle();
@@ -249,12 +322,41 @@ function update() {
   obstacles.forEach(o => o.x -= speed);
   obstacles = obstacles.filter(o => o.x > -80);
 
+  // ---- OBSTACLE COLLISIONS ----
   obstacles.forEach(o => {
-    const isPit = o.type==='pothole' || o.type==='crack';
+    const isPit = o.type === 'pothole' || o.type === 'crack';
+
     if (isPit) {
-      if (carter.onGround && carter.x+10>o.x && carter.x-10<o.x+o.w) die();
+      // Pit: only kills if on ground directly over it
+      if (carter.onGround && carter.x + 10 > o.x && carter.x - 10 < o.x + o.w) {
+        die();
+      }
     } else {
-      if (carter.x+10>o.x && carter.x-7<o.x+o.w && carter.y-28<GROUND_Y && carter.y>GROUND_Y-o.h-4) die();
+      // Solid obstacle bounding box
+      const oTop = GROUND_Y - o.h;
+      const carterBottom = carter.y;
+      const carterTop    = carter.y - 38;
+
+      const overlapX = carter.x + 10 > o.x && carter.x - 7 < o.x + o.w;
+
+      if (overlapX) {
+        // Check if landing ON TOP (center of player above top of obstacle, coming down)
+        const carterCenterX = carter.x;
+        const onTopHorizontally = carterCenterX > o.x - 4 && carterCenterX < o.x + o.w + 4;
+        const comingDown = carter.vy >= 0;
+        const nearTop = carterBottom >= oTop - 6 && carterBottom <= oTop + 10;
+
+        if (onTopHorizontally && comingDown && nearTop && !carter.onGround) {
+          // BOUNCE off top of obstacle
+          carter.y  = oTop;
+          carter.vy = -9.0;   // bounced upward
+          carter.onGround = false;
+          spawnParticles(carter.x, carter.y, 6, pal.accent + 'cc');
+        } else if (carterBottom > oTop + 10 && carterTop < GROUND_Y) {
+          // Side / full collision: wobbly, not instant death
+          hitBarrier();
+        }
+      }
     }
   });
 
@@ -267,9 +369,10 @@ function update() {
 
 function die() {
   state = 'dead';
-  spawnParticles(carter.x, carter.y, 14, pal.accent);
+  spawnParticles(carter.x, carter.y - 18, 18, pal.accent);
   finalScoreEl.textContent = Math.floor(score) + ' m  ·  best ' + Math.floor(hiScore) + ' m';
   gameOverEl.style.display = 'flex';
+  statusMsg.textContent = '';
 }
 
 // ---- DRAWING ----
@@ -322,11 +425,10 @@ function drawSkyline() {
     ctx.globalAlpha = 1;
   }
 
-  drawLayer(0.10, pal.bldgFar, 0.18, 1.28, false);
-  drawLayer(0.25, pal.bldgMid, 0.34, 1.0, true);
+  drawLayer(0.10, pal.bldgFar,  0.18, 1.28, false);
+  drawLayer(0.25, pal.bldgMid,  0.34, 1.0,  true);
   drawLayer(0.48, pal.bldgNear, 0.50, 0.64, false);
 
-  // faint window lights
   ctx.globalAlpha = 0.07;
   ctx.fillStyle = pal.sun;
   for (let rep = -1; rep <= 1; rep++) {
@@ -334,11 +436,9 @@ function drawSkyline() {
       const rx = b.x - bgOff1 * 0.25 + rep * totalW;
       if (rx > W + 80 || rx + b.w < -80) return;
       const bh = b.h;
-      for (let wy = GROUND_Y-bh+12; wy < GROUND_Y-10; wy+=9) {
-        for (let wx = rx+2; wx < rx+b.w-2; wx+=5) {
+      for (let wy = GROUND_Y-bh+12; wy < GROUND_Y-10; wy+=9)
+        for (let wx = rx+2; wx < rx+b.w-2; wx+=5)
           ctx.fillRect(wx, wy, 1.5, 2.5);
-        }
-      }
     });
   }
   ctx.globalAlpha = 1;
@@ -361,24 +461,19 @@ function drawStreetTrees() {
   }
 }
 
-// Draw a little sneaker shoe shape
 function drawShoe(cx, cy, color, sz) {
   ctx.save();
   ctx.translate(cx, cy);
-  // sole - dark strip
   ctx.fillStyle = '#28201088';
   ctx.beginPath(); ctx.roundRect(-sz, sz*0.1, sz*2, sz*0.55, sz*0.2); ctx.fill();
-  // upper
   ctx.fillStyle = color;
   ctx.beginPath();
   ctx.moveTo(-sz*0.85, sz*0.12);
   ctx.lineTo(-sz*0.6, -sz*0.9);
   ctx.quadraticCurveTo(sz*0.05, -sz*1.1, sz*0.9, sz*0.12);
   ctx.closePath(); ctx.fill();
-  // toe cap
   ctx.fillStyle = 'rgba(255,255,255,0.15)';
   ctx.beginPath(); ctx.ellipse(sz*0.65, 0, sz*0.3, sz*0.28, 0.4, 0, Math.PI*2); ctx.fill();
-  // lace
   ctx.strokeStyle = 'rgba(255,255,255,0.28)';
   ctx.lineWidth = sz*0.16; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(-sz*0.2, -sz*0.55); ctx.lineTo(sz*0.35, -sz*0.68); ctx.stroke();
@@ -390,14 +485,12 @@ function drawTelephonePoles() {
   const poleH = 118;
   const poleTopY = GROUND_Y - poleH;
   const crossY = poleTopY + 8;
-  // Flag line is HIGH - right at crossarm level
   const flagLineY = crossY + 2;
 
   for (let i = -1; i < 5; i++) {
     const px = (i * poleSpacing) - (wireOff % poleSpacing);
     const nx = px + poleSpacing;
 
-    // utility wires (lower, below crossarm)
     for (let w = 0; w < 3; w++) {
       const wy = crossY + 22 + w * 9;
       const sag = 18 + w * 3;
@@ -409,7 +502,6 @@ function drawTelephonePoles() {
       ctx.stroke();
     }
 
-    // shoe-line wire (HIGH - near top of pole)
     ctx.strokeStyle = pal.wire + 'cc';
     ctx.lineWidth = 1.1;
     ctx.beginPath();
@@ -417,7 +509,6 @@ function drawTelephonePoles() {
     ctx.quadraticCurveTo((px+nx)/2, flagLineY + 5, nx, flagLineY);
     ctx.stroke();
 
-    // Shoes dangling from the line
     const numPairs = 3 + (i % 2);
     for (let s = 0; s < numPairs; s++) {
       const t = (s + 0.5) / numPairs;
@@ -429,7 +520,6 @@ function drawTelephonePoles() {
       const c1 = colors[s % colors.length];
       const c2 = colors[(s + 2) % colors.length];
 
-      // lace strings going up
       ctx.strokeStyle = pal.wire + '99';
       ctx.lineWidth = 0.9; ctx.lineCap = 'round';
       ctx.beginPath(); ctx.moveTo(sx - 2, wireY); ctx.lineTo(sx - 3, wireY + 9); ctx.stroke();
@@ -439,23 +529,19 @@ function drawTelephonePoles() {
       drawShoe(sx + 5, wireY + 7 + shoeSize * 0.9, c2, shoeSize * 0.85);
     }
 
-    // wooden pole - brown
     ctx.strokeStyle = pal.wire;
     ctx.lineWidth = 5; ctx.lineCap = 'square';
     ctx.beginPath(); ctx.moveTo(px, GROUND_Y+2); ctx.lineTo(px, poleTopY); ctx.stroke();
-    // grain lines
     ctx.strokeStyle = 'rgba(0,0,0,0.10)'; ctx.lineWidth = 1;
     for (let g = -1; g <= 1; g++) {
       ctx.beginPath(); ctx.moveTo(px+g, poleTopY+18); ctx.lineTo(px+g, GROUND_Y); ctx.stroke();
     }
 
-    // crossarm
     ctx.strokeStyle = pal.wire; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(px-18, crossY+4); ctx.lineTo(px+18, crossY+4); ctx.stroke();
     ctx.lineWidth = 2.5;
     ctx.beginPath(); ctx.moveTo(px-11, crossY+24); ctx.lineTo(px+11, crossY+24); ctx.stroke();
 
-    // ceramic insulators
     ctx.fillStyle = pal.bldgMid;
     [-10,0,10].forEach(ox => { ctx.beginPath(); ctx.arc(px+ox, crossY+4, 2.2, 0, Math.PI*2); ctx.fill(); });
     [-7,7].forEach(ox => { ctx.beginPath(); ctx.arc(px+ox, crossY+24, 1.8, 0, Math.PI*2); ctx.fill(); });
@@ -463,13 +549,11 @@ function drawTelephonePoles() {
 }
 
 function drawGround() {
-  // asphalt
   const g = ctx.createLinearGradient(0, GROUND_Y, 0, H);
   g.addColorStop(0, pal.ground);
   g.addColorStop(1, pal.groundDark);
   ctx.fillStyle = g; ctx.fillRect(0, GROUND_Y, W, H-GROUND_Y);
 
-  // asphalt texture dots
   ctx.globalAlpha = 0.055;
   ctx.fillStyle = '#000';
   for (let i = 0; i < 130; i++) {
@@ -479,19 +563,16 @@ function drawGround() {
   }
   ctx.globalAlpha = 1;
 
-  // sidewalk seam lines
   ctx.strokeStyle = pal.groundDark+'55'; ctx.lineWidth = 1;
   for (let i = 0; i < 10; i++) {
     const sx = (i*80 - groundOff%80);
     ctx.beginPath(); ctx.moveTo(sx, GROUND_Y+1); ctx.lineTo(sx, H); ctx.stroke();
   }
 
-  // dashed center line
   ctx.strokeStyle = pal.roadLine + '55'; ctx.lineWidth = 1.5; ctx.setLineDash([14,20]);
   ctx.beginPath(); ctx.moveTo(0, GROUND_Y + (H-GROUND_Y)*0.44); ctx.lineTo(W, GROUND_Y + (H-GROUND_Y)*0.44); ctx.stroke();
   ctx.setLineDash([]);
 
-  // curb
   ctx.strokeStyle = pal.groundDark; ctx.lineWidth = 2.5;
   ctx.beginPath(); ctx.moveTo(0, GROUND_Y+2); ctx.lineTo(W, GROUND_Y+2); ctx.stroke();
 }
@@ -500,23 +581,23 @@ function drawObstacle(o) {
   ctx.lineCap = 'round';
   if (o.type === 'cone') {
     ctx.fillStyle = '#a04820';
-    ctx.beginPath(); ctx.moveTo(o.x+11, GROUND_Y-24); ctx.lineTo(o.x, GROUND_Y); ctx.lineTo(o.x+22, GROUND_Y); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = 'rgba(220,210,190,0.55)'; ctx.fillRect(o.x+3, GROUND_Y-13, 14, 3);
+    ctx.beginPath(); ctx.moveTo(o.x+11, GROUND_Y-22); ctx.lineTo(o.x, GROUND_Y); ctx.lineTo(o.x+22, GROUND_Y); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(220,210,190,0.55)'; ctx.fillRect(o.x+3, GROUND_Y-12, 14, 3);
   } else if (o.type === 'hydrant') {
     ctx.fillStyle = '#704828';
-    ctx.beginPath(); ctx.roundRect(o.x+2, GROUND_Y-24, 18, 24, 3); ctx.fill();
-    ctx.fillStyle = '#845838'; ctx.fillRect(o.x, GROUND_Y-18, 22, 7);
+    ctx.beginPath(); ctx.roundRect(o.x+2, GROUND_Y-22, 18, 22, 3); ctx.fill();
+    ctx.fillStyle = '#845838'; ctx.fillRect(o.x, GROUND_Y-16, 22, 7);
     ctx.fillStyle = '#987048';
-    ctx.beginPath(); ctx.arc(o.x+11, GROUND_Y-26, 5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(o.x+11, GROUND_Y-24, 5, 0, Math.PI*2); ctx.fill();
   } else if (o.type === 'bench') {
     ctx.fillStyle = '#705830';
-    ctx.fillRect(o.x, GROUND_Y-14, 38, 4);
-    ctx.fillRect(o.x+4, GROUND_Y-17, 30, 12);
+    ctx.fillRect(o.x, GROUND_Y-12, 38, 4);
+    ctx.fillRect(o.x+4, GROUND_Y-15, 30, 10);
     ctx.fillStyle = '#503820';
     ctx.fillRect(o.x+2, GROUND_Y-4, 5, 5); ctx.fillRect(o.x+31, GROUND_Y-4, 5, 5);
   } else if (o.type === 'trash') {
-    ctx.fillStyle = '#525448'; ctx.fillRect(o.x+2, GROUND_Y-26, 18, 26);
-    ctx.fillStyle = '#404038'; ctx.fillRect(o.x, GROUND_Y-28, 22, 5);
+    ctx.fillStyle = '#525448'; ctx.fillRect(o.x+2, GROUND_Y-22, 18, 22);
+    ctx.fillStyle = '#404038'; ctx.fillRect(o.x, GROUND_Y-24, 22, 5);
   } else if (o.type === 'pothole') {
     ctx.fillStyle = '#141008';
     ctx.beginPath(); ctx.ellipse(o.x+o.w/2, GROUND_Y+3, o.w/2, 9, 0, 0, Math.PI*2); ctx.fill();
@@ -537,12 +618,19 @@ function drawObstacle(o) {
 
 function drawCarter() {
   const x = carter.x, y = carter.y;
-  ctx.save(); ctx.translate(x, y);
+  ctx.save();
+  ctx.translate(x, y);
+
+  // Apply wobble lean when in wobbly state
+  if (wobbleState === 'wobbly') {
+    ctx.rotate(wobbleAngle);
+  }
+
   if (carter.spinning) ctx.rotate((carter.rotation*Math.PI)/180);
 
   const wRot = (frame * speed * 0.10) % (Math.PI*2);
 
-  // deck - maple wood
+  // deck
   ctx.fillStyle = '#b88840';
   ctx.beginPath(); ctx.roundRect(-16,-3,32,6,3); ctx.fill();
   ctx.strokeStyle = '#907020'; ctx.lineWidth = 0.7;
@@ -565,7 +653,7 @@ function drawCarter() {
   ctx.beginPath(); ctx.moveTo(-16,3); ctx.lineTo(-12,6); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(16,3); ctx.lineTo(12,6); ctx.stroke();
 
-  // legs - jeans
+  // legs
   const lb = carter.onGround ? Math.sin(frame*speed*0.10)*1.5 : 0;
   ctx.strokeStyle = '#506080'; ctx.lineWidth = 4; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(-3,-4); ctx.lineTo(-4+lb,-14); ctx.stroke();
@@ -585,9 +673,10 @@ function drawCarter() {
   ctx.strokeStyle = 'rgba(100,120,150,0.35)'; ctx.lineWidth = 0.9;
   ctx.beginPath(); ctx.roundRect(-2.5,-21,5,5,1); ctx.stroke();
 
-  // arms
+  // arms - flailing when wobbly
   ctx.strokeStyle = '#7888a0'; ctx.lineWidth = 3; ctx.lineCap = 'round';
-  const ab = carter.onGround ? Math.sin(frame*speed*0.10+1)*2 : (carter.spinning ? 10 : -7);
+  let ab = carter.onGround ? Math.sin(frame*speed*0.10+1)*2 : (carter.spinning ? 10 : -7);
+  if (wobbleState === 'wobbly') ab = Math.sin(frame * 0.35) * 14; // arms flail wildly
   ctx.beginPath(); ctx.moveTo(-6,-26); ctx.lineTo(-13,-21+ab*0.28); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(6,-26); ctx.lineTo(13,-21-ab*0.28); ctx.stroke();
 
@@ -595,9 +684,9 @@ function drawCarter() {
   ctx.fillStyle = '#e8c8a2';
   ctx.beginPath(); ctx.arc(0,-36,8.5,0,Math.PI*2); ctx.fill();
 
-  // YELLOW HAIR - no helmet
+  // LONG YELLOW HAIR - no helmet, longer and flowing
   const y1 = '#c8a030', y2 = '#dfbe52', y3 = '#a07a20';
-  // main hair mass
+  // main hair mass on top
   ctx.fillStyle = y1;
   ctx.beginPath(); ctx.arc(0,-41,9.8,Math.PI*0.80,Math.PI*2.20); ctx.fill();
   ctx.beginPath(); ctx.arc(-9,-37,4.2,-0.5,1.6); ctx.fill();
@@ -606,14 +695,37 @@ function drawCarter() {
   ctx.fillStyle = y2;
   ctx.beginPath(); ctx.arc(-3,-31.5,3.8,Math.PI,0); ctx.fill();
   ctx.beginPath(); ctx.arc(3,-31.5,3.2,Math.PI,0); ctx.fill();
-  // flowing strands blowing back
+
+  // long hair flowing down behind (extra length for no helmet look)
+  ctx.fillStyle = y1;
+  ctx.beginPath();
+  ctx.moveTo(-8,-38);
+  ctx.quadraticCurveTo(-12,-32,-10,-22);
+  ctx.quadraticCurveTo(-11,-18,-8,-12);
+  ctx.quadraticCurveTo(-5,-14,-7,-22);
+  ctx.quadraticCurveTo(-9,-30,-7,-38);
+  ctx.closePath(); ctx.fill();
+
+  // flowing strands blowing back with speed
+  const wobbleOffset = wobbleState === 'wobbly' ? Math.sin(frame*0.3)*4 : 0;
   ctx.strokeStyle = y3; ctx.lineWidth = 2.8; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(-8,-38); ctx.quadraticCurveTo(-16,-44,-23-speed*0.42,-40); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-8,-38);
+  ctx.quadraticCurveTo(-16,-44+wobbleOffset,-23-speed*0.42,-40+wobbleOffset); ctx.stroke();
   ctx.strokeStyle = y1; ctx.lineWidth = 2.2;
-  ctx.beginPath(); ctx.moveTo(-7,-35); ctx.quadraticCurveTo(-15,-39,-22-speed*0.5,-34); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-7,-35);
+  ctx.quadraticCurveTo(-15,-39+wobbleOffset,-22-speed*0.5,-34+wobbleOffset); ctx.stroke();
   ctx.strokeStyle = y2; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(-5,-41); ctx.quadraticCurveTo(-13,-47,-19-speed*0.36,-44); ctx.stroke();
-  // shine highlight
+  ctx.beginPath(); ctx.moveTo(-5,-41);
+  ctx.quadraticCurveTo(-13,-47+wobbleOffset,-19-speed*0.36,-44+wobbleOffset); ctx.stroke();
+  // longer strand going down
+  ctx.strokeStyle = y1; ctx.lineWidth = 1.8;
+  ctx.beginPath(); ctx.moveTo(-9,-36);
+  ctx.quadraticCurveTo(-14,-28,-13,-18); ctx.stroke();
+  ctx.strokeStyle = y2; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(-8,-34);
+  ctx.quadraticCurveTo(-12,-26,-11,-16); ctx.stroke();
+
+  // shine
   ctx.strokeStyle = y2; ctx.lineWidth = 1.1;
   ctx.beginPath(); ctx.moveTo(-1,-46); ctx.quadraticCurveTo(4,-48,7,-45); ctx.stroke();
 
@@ -625,6 +737,13 @@ function drawCarter() {
   ctx.beginPath(); ctx.arc(0.4,-34.8,0.7,0,Math.PI*2); ctx.fill();
   ctx.strokeStyle = 'rgba(90,52,22,0.50)'; ctx.lineWidth = 1.2;
   ctx.beginPath(); ctx.arc(0,-33.8,2.4,0.3,Math.PI-0.3); ctx.stroke();
+
+  // wobbly sweat drops
+  if (wobbleState === 'wobbly' && wobbleTimer > 200) {
+    ctx.fillStyle = 'rgba(120,180,220,0.55)';
+    ctx.beginPath(); ctx.arc(11,-38,2,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(14,-34,1.4,0,Math.PI*2); ctx.fill();
+  }
 
   ctx.restore();
 }
@@ -640,6 +759,16 @@ function drawParticles() {
 
 function draw() {
   ctx.clearRect(0, 0, W, H);
+
+  // Subtle screen wobble effect when wobbly
+  if (wobbleState === 'wobbly') {
+    const decay = wobbleTimer / WOBBLE_DURATION;
+    const shakeX = (Math.random()-0.5) * 2.5 * decay;
+    const shakeY = (Math.random()-0.5) * 1.2 * decay;
+    ctx.save();
+    ctx.translate(shakeX, shakeY);
+  }
+
   drawSky();
   drawSkyline();
   drawStreetTrees();
@@ -648,6 +777,14 @@ function draw() {
   obstacles.forEach(drawObstacle);
   drawCarter();
   drawParticles();
+
+  if (wobbleState === 'wobbly') {
+    // Subtle warm tint overlay when wobbly
+    const decay = wobbleTimer / WOBBLE_DURATION;
+    ctx.fillStyle = `rgba(180,120,40,${0.06 * decay})`;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
 }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
